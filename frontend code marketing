@@ -1,0 +1,167 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime, date
+import backend as be
+
+st.set_page_config(page_title="Marketing Campaign Manager", layout="wide")
+
+def main():
+    st.title("📈 Marketing Campaign Manager")
+
+    menu = ["Campaigns", "Customers & Segments", "Performance Dashboard", "Business Insights"]
+    choice = st.sidebar.selectbox("Menu", menu)
+
+    if choice == "Campaigns":
+        st.subheader("Campaign Management")
+
+        with st.form("campaign_form", clear_on_submit=True):
+            st.write("### Create a New Campaign")
+            name = st.text_input("Campaign Name")
+            description = st.text_area("Description")
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date")
+            with col2:
+                end_date = st.date_input("End Date", min_value=start_date)
+            
+            budget = st.number_input("Budget ($)", min_value=0.0, format="%.2f")
+            channels = st.multiselect("Channels", ["Email", "Social Media", "Paid Ads", "Content Marketing", "SEO"])
+            
+            submitted = st.form_submit_button("Create Campaign")
+            if submitted:
+                if not all([name, start_date, end_date, budget, channels]):
+                    st.warning("Please fill in all required fields.")
+                else:
+                    be.create_campaign(name, description, start_date, end_date, budget, channels)
+                    st.success(f"Campaign '{name}' created successfully!")
+        
+        st.write("---")
+        st.write("### All Campaigns")
+        campaign_data = be.read_all_campaigns()
+        if campaign_data:
+            df_campaigns = pd.DataFrame(campaign_data, columns=["ID", "Name", "Budget", "Start Date", "End Date"])
+            st.dataframe(df_campaigns, use_container_width=True)
+            
+            campaign_to_delete = st.selectbox("Select a campaign to delete", options=[(c[1], c[0]) for c in campaign_data], format_func=lambda x: x[0], index=None)
+            if st.button("Delete Campaign", type="primary") and campaign_to_delete:
+                be.delete_campaign(campaign_to_delete[1])
+                st.success(f"Campaign '{campaign_to_delete[0]}' deleted.")
+                st.rerun() # Refresh the page to show updated list
+
+    elif choice == "Customers & Segments":
+        st.subheader("Customer Management")
+        
+        with st.expander("Add a New Customer"):
+            with st.form("customer_form", clear_on_submit=True):
+                name = st.text_input("Customer Name")
+                email = st.text_input("Email")
+                region = st.text_input("Region (e.g., North America, EMEA, APAC)")
+                last_purchase_date = st.date_input("Last Purchase Date")
+                
+                submitted = st.form_submit_button("Add Customer")
+                if submitted:
+                    be.create_customer(name, email, region, last_purchase_date)
+                    st.success(f"Customer '{name}' added successfully!")
+
+        st.write("---")
+        st.subheader("Customer Segmentation")
+        
+        all_customers = be.read_all_customers()
+        if all_customers:
+            df_customers = pd.DataFrame(all_customers, columns=["ID", "Name", "Email", "Region", "Last Purchase Date"])
+            regions = ["All"] + sorted(df_customers['Region'].unique().tolist())
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                filter_region = st.selectbox("Filter by Region", options=regions)
+            with col2:
+                filter_date = st.date_input("Purchased After", value=None)
+
+            segment = be.read_customer_segment(filter_region, filter_date)
+            st.write(f"**Found {len(segment)} customers in this segment.**")
+            
+            if segment:
+                df_segment = pd.DataFrame(segment, columns=["ID", "Name", "Email"])
+                st.dataframe(df_segment, use_container_width=True)
+        else:
+            st.info("No customers found. Please add customers first.")
+
+    elif choice == "Performance Dashboard":
+        st.subheader("Campaign Performance Dashboard")
+        all_campaigns = be.read_all_campaigns()
+        
+        if not all_campaigns:
+            st.warning("No campaigns found. Please create a campaign first.")
+            return
+
+        campaign_options = {c[1]: c[0] for c in all_campaigns}
+        selected_campaign_name = st.selectbox("Select a Campaign", options=campaign_options.keys())
+        
+        if selected_campaign_name:
+            campaign_id = campaign_options[selected_campaign_name]
+            performance = be.read_performance_data(campaign_id)
+            
+            if performance:
+                sent, opened, clicks, updated = performance
+                
+                open_rate = (opened / sent * 100) if sent > 0 else 0
+                ctr = (clicks / opened * 100) if opened > 0 else 0
+                
+                st.write(f"#### Metrics for: **{selected_campaign_name}**")
+                st.caption(f"Last updated: {updated.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Emails Sent 📧", f"{sent:,}")
+                col2.metric("Open Rate 📬", f"{open_rate:.2f}%")
+                col3.metric("Click-Through Rate (CTR) 🖱️", f"{ctr:.2f}%")
+                
+                st.write("---")
+                
+                # Communication & Performance Update Section
+                st.write("#### Send Communication / Update Stats")
+                
+                customers_segment = be.read_all_customers() # Fetch all customers for simulation
+                if not customers_segment:
+                    st.info("No customers available to send emails.")
+                else:
+                    num_to_send = st.number_input(f"Number of emails to send to segment ({len(customers_segment)} customers available)", min_value=0, max_value=len(customers_segment), value=10, step=10)
+                    if st.button(f"Simulate Sending Email to {num_to_send} Customers"):
+                        be.update_performance_metrics(campaign_id, emails_sent=num_to_send)
+                        st.success(f"Simulated sending {num_to_send} emails. Stats updated.")
+                        st.rerun()
+
+                with st.expander("Manually update other metrics"):
+                    with st.form("update_metrics_form"):
+                        opened_update = st.number_input("Add Emails Opened", min_value=0, step=1)
+                        clicks_update = st.number_input("Add Clicks", min_value=0, step=1)
+                        submitted = st.form_submit_button("Update Metrics")
+                        if submitted:
+                           be.update_performance_metrics(campaign_id, emails_opened=opened_update, clicks=clicks_update)
+                           st.success("Performance metrics updated.")
+                           st.rerun()
+
+    elif choice == "Business Insights":
+        st.subheader("📊 Business Insights Dashboard")
+        insights = be.get_business_insights()
+        
+        st.write("### Campaign Overview")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Campaigns", f"{insights['campaign_count']:.0f}")
+        col2.metric("Total Budget 💰", f"${insights['total_budget']:,.2f}")
+        col3.metric("Average Budget", f"${insights['avg_budget']:,.2f}")
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Smallest Campaign Budget", f"${insights['min_budget']:,.2f}")
+        col2.metric("Largest Campaign Budget", f"${insights['max_budget']:,.2f}")
+        
+        st.write("---")
+        st.write("### Customer & Engagement Overview")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Customers 👥", f"{insights['customer_count']:,}")
+        col2.metric("Total Emails Sent", f"{insights['total_emails_sent']:,}")
+        col3.metric("Total Emails Opened", f"{insights['total_emails_opened']:,}")
+        col4.metric("Total Clicks", f"{insights['total_clicks']:,}")
+
+
+if __name__ == "__main__":
+    main()
